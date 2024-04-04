@@ -33,6 +33,37 @@ func (cu *CustomURL) UnmarshalBinary(data []byte) error {
 	return err
 }
 
+type FilePermission uint8
+
+type FilePermissionSet FilePermission
+
+const (
+	ReadPermission    FilePermission = 1 << iota // 1 << 0 == 1
+	WritePermission                              // 1 << 1 == 2
+	ExecutePermission                            // 1 << 2 == 4
+)
+
+func (fps *FilePermissionSet) addPermission(permission FilePermission) {
+	*fps |= FilePermissionSet(permission)
+}
+
+func (fps *FilePermissionSet) UnmarshalText(text []byte) error {
+	*fps = 0 // Reset permissions
+	for _, b := range text {
+		switch b {
+		case 'r':
+			fps.addPermission(ReadPermission)
+		case 'w':
+			fps.addPermission(WritePermission)
+		case 'x':
+			fps.addPermission(ExecutePermission)
+		default:
+			return fmt.Errorf("invalid permission: %c", b)
+		}
+	}
+	return nil
+}
+
 type Specification struct {
 	Embedded                     `desc:"can we document a struct"`
 	EmbeddedButIgnored           `ignored:"true"`
@@ -64,12 +95,14 @@ type Specification struct {
 		Property            string `envconfig:"inner"`
 		PropertyWithDefault string `default:"fuzzybydefault"`
 	} `envconfig:"outer"`
-	AfterNested  string
-	DecodeStruct HonorDecodeInStruct `envconfig:"honor"`
-	Datetime     time.Time
-	MapField     map[string]string `default:"one:two,three:four"`
-	UrlValue     CustomURL
-	UrlPointer   *CustomURL
+	AfterNested           string
+	DecodeStruct          HonorDecodeInStruct `envconfig:"honor"`
+	Datetime              time.Time
+	MapField              map[string]string `default:"one:two,three:four"`
+	UrlValue              CustomURL
+	UrlPointer            *CustomURL
+	FilePermissionValue   FilePermissionSet
+	FilePermissionPointer *FilePermissionSet
 }
 
 type Embedded struct {
@@ -111,6 +144,8 @@ func TestProcess(t *testing.T) {
 	os.Setenv("ENV_CONFIG_MULTI_WORD_ACR_WITH_AUTO_SPLIT", "25")
 	os.Setenv("ENV_CONFIG_URLVALUE", "https://github.com/kelseyhightower/envconfig")
 	os.Setenv("ENV_CONFIG_URLPOINTER", "https://github.com/kelseyhightower/envconfig")
+	os.Setenv("ENV_CONFIG_FILEPERMISSIONVALUE", "rwx")
+	os.Setenv("ENV_CONFIG_FILEPERMISSIONPOINTER", "rwx")
 	err := Process("env_config", &s)
 	if err != nil {
 		t.Error(err.Error())
@@ -216,6 +251,16 @@ func TestProcess(t *testing.T) {
 
 	if *s.UrlPointer.Value != *u {
 		t.Errorf("expected %q, got %q", u, s.UrlPointer.Value.String())
+	}
+
+	fps := FilePermissionSet(ReadPermission | WritePermission | ExecutePermission)
+
+	if s.FilePermissionValue != fps {
+		t.Errorf("expected %q, got %q", fps, s.FilePermissionValue)
+	}
+
+	if *s.FilePermissionPointer != fps {
+		t.Errorf("expected %q, got %q", fps, *s.FilePermissionPointer)
 	}
 }
 
@@ -794,7 +839,7 @@ func TestCheckDisallowedIgnored(t *testing.T) {
 
 func TestErrorMessageForRequiredAltVar(t *testing.T) {
 	var s struct {
-		Foo    string `envconfig:"BAR" required:"true"`
+		Foo string `envconfig:"BAR" required:"true"`
 	}
 
 	os.Clearenv()
